@@ -86,6 +86,10 @@ Each highlighted article becomes `<folder>/<Article title>.md`. The file is rewr
     npm run shortcut     # rebuild the Shortcut (macOS)
     npm run deploy       # deploy the linked Netlify project
 
+## Author
+
+Built by [Glen Lubbert](https://glenlubbert.com) as a personal replacement for a paid read-it-later subscription.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
