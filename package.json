@@ -1,0 +1,19 @@
+{
+  "name": "later",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Personal read-it-later app",
+  "scripts": {
+    "dev": "npx -y netlify-cli dev --offline",
+    "deploy": "npx -y netlify-cli deploy --prod --site fb70998f-b379-4b8f-8703-d65e180cc129",
+    "icons": "python3 scripts/make_icons.py",
+    "shortcut": "python3 scripts/make_shortcut.py https://read.glenlubbert.com",
+    "zip": "cd extension && zip -qr ../public/later-extension.zip . -x '.*'"
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.6.0",
+    "@netlify/blobs": "^10.0.0",
+    "linkedom": "^0.18.0"
+  }
+}
