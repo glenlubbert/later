@@ -132,7 +132,7 @@ function gate(mode) {
         }
       },
     },
-    h("input", { type: "text", name: "username", value: "glen", autocomplete: "username", hidden: true }),
+    h("input", { type: "text", name: "username", value: "later", autocomplete: "username", hidden: true }),
     first,
     second,
     submit,
@@ -759,7 +759,7 @@ async function renderSettings(params) {
       return;
     }
     const keyField = h("input", { class: "field", placeholder: "Dropbox app key", "aria-label": "Dropbox app key", value: info.appKey, autocomplete: "off", spellcheck: "false" });
-    const folderField = h("input", { class: "field", placeholder: "Folder", "aria-label": "Dropbox folder", value: info.folder || "/3. Resources/Highlights", autocomplete: "off" });
+    const folderField = h("input", { class: "field", placeholder: "Folder", "aria-label": "Dropbox folder", value: info.folder || "/Later Highlights", autocomplete: "off" });
     const connect = h("button", { class: "btn", type: "submit" }, "Connect Dropbox");
     dropboxPanel.replaceChildren(
       head,
@@ -812,7 +812,7 @@ async function renderSettings(params) {
           "ol",
           null,
           h("li", null, "Open this page on your iPhone or iPad and tap ", h("b", null, "Create token"), ", then ", h("b", null, "Copy"), "."),
-          h("li", null, "Tap ", h("b", null, "Get the shortcut"), ", then ", h("b", null, "Add Shortcut"), ", and paste the token when it asks."),
+          h("li", null, "Tap ", h("b", null, "Get the shortcut"), ", then ", h("b", null, "Add Shortcut"), ". It asks two things: your address, which is ", h("code", null, origin), ", and the token you just copied."),
           h("li", null, "In Safari tap Share, then ", h("b", null, "Save to Later"), ". The first time, choose “Always Allow”."),
           h("li", null, "For the reading app itself: Share, then ", h("b", null, "Add to Home Screen"), ".")
         ),
@@ -831,6 +831,7 @@ async function renderSettings(params) {
           h("li", null, "Download and unzip the extension."),
           h("li", null, "Open ", h("code", null, "chrome://extensions"), " and switch on ", h("b", null, "Developer mode"), " (top right)."),
           h("li", null, "Click ", h("b", null, "Load unpacked"), " and pick the unzipped folder, then pin Later to the toolbar."),
+          h("li", null, "A page opens asking where your Later lives. Enter ", h("code", null, origin), " and click Connect."),
           h("li", null, "Click the button on any page, or press ", h("code", null, "Option+Shift+S"), ". Right-click any link to save it without opening it.")
         ),
         h("a", { class: "btn quiet", href: "/later-extension.zip", download: true }, "Download the extension")

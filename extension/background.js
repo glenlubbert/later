@@ -1,15 +1,18 @@
-import { BASES } from "./config.js";
-
 const COOKIE = "later_session";
 const MAX_HTML = 3_500_000;
 
-// The extension rides on your website sign-in: no separate setup.
-async function findSession() {
-  for (const base of BASES) {
-    const cookie = await chrome.cookies.get({ url: base, name: COOKIE });
-    if (cookie?.value) return { base, token: cookie.value };
-  }
-  return null;
+// Your Later address is set once on the options page. After that the
+// extension rides on your website sign-in.
+async function getBase() {
+  const { base } = await chrome.storage.local.get("base");
+  if (!base) return null;
+  const allowed = await chrome.permissions.contains({ origins: [base + "/*"] });
+  return allowed ? base : null;
+}
+
+async function findSession(base) {
+  const cookie = await chrome.cookies.get({ url: base, name: COOKIE });
+  return cookie?.value ? { base, token: cookie.value } : null;
 }
 
 function badge(text, color, tabId) {
@@ -59,10 +62,16 @@ async function save(tab, linkUrl) {
   const tabId = tab?.id;
   if (!/^https?:/i.test(url)) return badge("!", "#b3261e", tabId);
 
-  const session = await findSession();
+  const base = await getBase();
+  if (!base) {
+    await show(tabId, "Tell the extension where your Later lives", "error");
+    chrome.runtime.openOptionsPage();
+    return;
+  }
+  const session = await findSession(base);
   if (!session) {
     await show(tabId, "Sign in to Later first", "error");
-    chrome.tabs.create({ url: BASES[0] });
+    chrome.tabs.create({ url: base });
     return;
   }
 
@@ -101,7 +110,8 @@ async function save(tab, linkUrl) {
 
 chrome.action.onClicked.addListener((tab) => save(tab));
 
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener(async ({ reason }) => {
+  if (reason === "install" && !(await getBase())) chrome.runtime.openOptionsPage();
   chrome.contextMenus.create({ id: "save-link", title: "Save link to Later", contexts: ["link"] });
   chrome.contextMenus.create({ id: "save-page", title: "Save page to Later", contexts: ["page"] });
 });

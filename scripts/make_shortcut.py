@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Builds the "Save to Later" iOS/macOS Shortcut and signs it so it can be
-imported on any device. Usage: make_shortcut.py https://read.example.com"""
+imported on any device. The shortcut asks for the site address and a token
+when it is added, so one file works for every Later site. macOS only."""
 import plistlib, subprocess, sys, uuid, pathlib
 
-base = (sys.argv[1] if len(sys.argv) > 1 else "https://read.glenlubbert.com").rstrip("/")
 root = pathlib.Path(__file__).resolve().parent.parent
 unsigned = root / "scripts" / "unsigned.shortcut"
 signed = root / "public" / "later.shortcut"
 
-U_TOKEN, U_URL, U_REQ = (str(uuid.uuid4()).upper() for _ in range(3))
+U_BASE, U_TOKEN, U_URL, U_REQ = (str(uuid.uuid4()).upper() for _ in range(4))
 
 def text(s):
     return {"Value": {"string": s}, "WFSerializationType": "WFTextTokenString"}
@@ -32,6 +32,8 @@ def dictionary(key, value):
 
 actions = [
     {"WFWorkflowActionIdentifier": "is.workflow.actions.gettext",
+     "WFWorkflowActionParameters": {"UUID": U_BASE, "WFTextActionText": ""}},
+    {"WFWorkflowActionIdentifier": "is.workflow.actions.gettext",
      "WFWorkflowActionParameters": {"UUID": U_TOKEN, "WFTextActionText": ""}},
     {"WFWorkflowActionIdentifier": "is.workflow.actions.detect.link",
      "WFWorkflowActionParameters": {
@@ -40,7 +42,13 @@ actions = [
     {"WFWorkflowActionIdentifier": "is.workflow.actions.downloadurl",
      "WFWorkflowActionParameters": {
          "UUID": U_REQ,
-         "WFURL": base + "/api/save?plain=1",
+         "WFURL": {
+             "Value": {
+                 "string": "\ufffc/api/save?plain=1",
+                 "attachmentsByRange": {"{0, 1}": {"OutputName": "Text", "OutputUUID": U_BASE, "Type": "ActionOutput"}},
+             },
+             "WFSerializationType": "WFTextTokenString",
+         },
          "WFHTTPMethod": "POST",
          "ShowHeaders": True,
          "WFHTTPHeaders": dictionary("Authorization", text_with("Bearer ", U_TOKEN, "Text")),
@@ -64,10 +72,13 @@ shortcut = {
     "WFWorkflowOutputContentItemClasses": [],
     "WFWorkflowHasShortcutInputVariables": True,
     "WFWorkflowHasOutputFallback": False,
-    "WFWorkflowImportQuestions": [{
-        "ActionIndex": 0, "Category": "Parameter", "DefaultValue": "",
-        "ParameterKey": "WFTextActionText",
-        "Text": "Paste the token from Later > Settings > iPhone & iPad"}],
+    "WFWorkflowImportQuestions": [
+        {"ActionIndex": 0, "Category": "Parameter", "DefaultValue": "https://",
+         "ParameterKey": "WFTextActionText",
+         "Text": "Your Later address, e.g. https://read.example.com (no slash at the end)"},
+        {"ActionIndex": 1, "Category": "Parameter", "DefaultValue": "",
+         "ParameterKey": "WFTextActionText",
+         "Text": "Paste the token from Later > Settings > iPhone & iPad"}],
     "WFWorkflowActions": actions,
 }
 
