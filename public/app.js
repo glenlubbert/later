@@ -1047,8 +1047,8 @@ async function renderSettings(params) {
       aiPanel.replaceChildren(
         h("h2", null, "AI summaries"),
         summaries
-          ? h("p", null, "On. Open any article and tap ", h("b", null, "Summarize"), " for a short overview. Each summary is made once and kept. A typical article costs two to five cents on your Anthropic account.")
-          : h("p", null, "Off. To turn it on, add an Anthropic API key to this site as the environment variable ", h("code", null, "ANTHROPIC_API_KEY"), " (Netlify: Project configuration, Environment variables), then redeploy. A ", h("b", null, "Summarize"), " button then appears on every article.")
+          ? h("p", null, `On, using ${summaries === "openai" ? "OpenAI" : "Anthropic"}. Open any article and tap `, h("b", null, "Summarize"), ` for a short overview. Each summary is made once and kept. A typical article costs a few cents on your ${summaries === "openai" ? "OpenAI" : "Anthropic"} account.`)
+          : h("p", null, "Off. To turn it on, add an OpenAI API key to this site as the environment variable ", h("code", null, "OPENAI_API_KEY"), " (or an Anthropic key as ", h("code", null, "ANTHROPIC_API_KEY"), ") under Netlify's Project configuration, Environment variables, then redeploy. A ", h("b", null, "Summarize"), " button then appears on every article.")
       )
     )
     .catch(() => {});

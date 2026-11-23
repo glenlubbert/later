@@ -304,7 +304,7 @@ export default async (req, context) => {
     const who = await auth.check(req);
 
     if (path === "/status" && method === "GET")
-      return json({ configured: who.configured, authed: who.authed, ...(who.authed ? { summaries: ai.available() } : {}) });
+      return json({ configured: who.configured, authed: who.authed, ...(who.authed ? { summaries: ai.provider() } : {}) });
 
     if (path === "/inbound" && method === "POST") return await receiveMail(req, context?.ip);
 
