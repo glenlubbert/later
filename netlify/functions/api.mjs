@@ -5,6 +5,17 @@ import { store, readIndex, updateIndex, readBody, writeBody, deleteBody } from "
 import * as dropbox from "../lib/dropbox.mjs";
 import * as marks from "../lib/highlights.mjs";
 import * as mail from "../lib/mail.mjs";
+import * as ai from "../lib/summary.mjs";
+
+// Tags are kept as typed ("Long reads"), compared case-insensitively.
+function cleanTags(input) {
+  const seen = new Map();
+  for (const raw of Array.isArray(input) ? input : []) {
+    const tag = String(raw || "").replace(/\s+/g, " ").trim().slice(0, 40);
+    if (tag && !seen.has(tag.toLowerCase())) seen.set(tag.toLowerCase(), tag);
+  }
+  return [...seen.values()].slice(0, 20);
+}
 
 const json = (data, status = 200, headers = {}) =>
   new Response(JSON.stringify(data), {
@@ -179,7 +190,7 @@ async function loadArticle(id, { refresh = false } = {}) {
     }
   }
   const { highlights } = await marks.readHighlights(id);
-  return { ...meta, content: stored?.content || "", highlights };
+  return { ...meta, content: stored?.content || "", summary: stored?.summary || "", canSummarize: ai.available(), highlights };
 }
 
 function parseCsv(text) {
@@ -237,8 +248,11 @@ async function importList(text) {
         continue;
       }
       known.add(url);
-      const folder = (row[folderCol] || "").trim().toLowerCase();
+      const folderName = (row[folderCol] || "").trim();
+      const folder = folderName.toLowerCase();
       const seconds = Number(row[timeCol]);
+      // Instapaper's own lists map onto ours; any other folder becomes a tag.
+      const tags = folder && !["unread", "archive", "starred"].includes(folder) ? cleanTags([folderName]) : [];
       fresh.push({
         id: newId(),
         url,
@@ -251,6 +265,7 @@ async function importList(text) {
         savedAt: seconds > 0 ? seconds * 1000 : Date.now(),
         archived: folder === "archive",
         liked: folder === "starred",
+        tags,
         progress: 0,
         hasContent: false,
         fetched: false,
@@ -289,7 +304,7 @@ export default async (req, context) => {
     const who = await auth.check(req);
 
     if (path === "/status" && method === "GET")
-      return json({ configured: who.configured, authed: who.authed });
+      return json({ configured: who.configured, authed: who.authed, ...(who.authed ? { summaries: ai.available() } : {}) });
 
     if (path === "/inbound" && method === "POST") return await receiveMail(req, context?.ip);
 
@@ -429,6 +444,46 @@ export default async (req, context) => {
       return json({ files, problem });
     }
 
+    // Renames a tag on every article, merging into an existing tag of that
+    // name; an empty "to" removes the tag everywhere.
+    if (path === "/tags/rename" && method === "POST") {
+      const input = await body(req);
+      const from = String(input.from || "").trim().toLowerCase();
+      const to = cleanTags([input.to])[0] || "";
+      if (!from) return fail("Which tag?");
+      const changed = await updateIndex((list) => {
+        let count = 0;
+        const into = to.toLowerCase();
+        for (const a of list) {
+          if (!(a.tags || []).length) continue;
+          const had = a.tags.some((t) => t.toLowerCase() === from);
+          // Renaming into an existing tag also gives that tag the new spelling.
+          a.tags = cleanTags(a.tags.map((t) => (t.toLowerCase() === from || (into && t.toLowerCase() === into) ? to : t)));
+          if (had) count++;
+        }
+        return { list, value: count };
+      });
+      return json({ changed });
+    }
+
+    const summaryMatch = path.match(/^\/articles\/([a-f0-9]+)\/summary$/);
+    if (summaryMatch && method === "POST") {
+      const id = summaryMatch[1];
+      const meta = (await readIndex()).find((a) => a.id === id);
+      if (!meta) return fail("Not found", 404);
+      const stored = (await readBody(id)) || {};
+      if (stored.summary) return json({ summary: stored.summary });
+      if (!stored.content) return fail("There's no article text to summarize");
+      try {
+        const summary = await ai.summarize({ title: meta.title, site: meta.site, content: stored.content });
+        await writeBody(id, { ...((await readBody(id)) || stored), summary });
+        return json({ summary });
+      } catch (err) {
+        console.warn("summary failed:", err.message);
+        return fail(ai.explain(err), 502);
+      }
+    }
+
     const mark = path.match(/^\/articles\/([a-f0-9]+)\/highlights(?:\/([a-f0-9]+))?$/);
     if (mark) {
       const meta = (await readIndex()).find((a) => a.id === mark[1]);
@@ -469,6 +524,7 @@ export default async (req, context) => {
           if (!meta) return { list, value: null };
           if (typeof patch.archived === "boolean") meta.archived = patch.archived;
           if (typeof patch.liked === "boolean") meta.liked = patch.liked;
+          if (Array.isArray(patch.tags)) meta.tags = cleanTags(patch.tags);
           if (typeof patch.progress === "number") meta.progress = Math.max(0, Math.min(1, patch.progress));
           if (typeof patch.title === "string" && patch.title.trim()) meta.title = patch.title.trim().slice(0, 300);
           return { list, value: { ...meta } };

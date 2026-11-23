@@ -1,7 +1,7 @@
 const app = document.getElementById("app");
 const toastEl = document.getElementById("toast");
 
-const state = { articles: [], loaded: false, tab: "unread", query: "", adding: false, listScroll: 0 };
+const state = { articles: [], loaded: false, tab: "unread", tag: "", query: "", adding: false, listScroll: 0 };
 const prefs = Object.assign({ theme: "auto", font: "serif", size: 20 }, readPrefs());
 
 function readPrefs() {
@@ -53,6 +53,8 @@ const PATHS = {
   out: '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/>',
   type: '<path d="M4 7V5h16v2M9 19h6M12 5v14"/>',
   refresh: '<path d="M21 3v6h-6M3 21v-6h6"/><path d="M20.5 9A9 9 0 0 0 5.6 5.6L3 8m18 8-2.6 2.4A9 9 0 0 1 3.5 15"/>',
+  tag: '<path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.2"/>',
+  spark: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6.3 6.3l2.5 2.5M15.2 15.2l2.5 2.5M6.3 17.7l2.5-2.5M15.2 8.8l2.5-2.5"/>',
 };
 function icon(name, filled) {
   const span = document.createElement("span");
@@ -181,15 +183,93 @@ async function refreshIfStale(maxAge = 10000) {
   refreshing = false;
 }
 
+const hasTag = (a, tag) => (a.tags || []).some((t) => t.toLowerCase() === tag.toLowerCase());
+
+function inTab(tab) {
+  if (tab === "liked") return state.articles.filter((a) => a.liked);
+  if (tab === "archive") return state.articles.filter((a) => a.archived);
+  return state.articles.filter((a) => !a.archived);
+}
+
+// Every tag in the library with how often it is used, most used first.
+function allTags(list = state.articles) {
+  const found = new Map();
+  for (const a of list)
+    for (const t of a.tags || []) {
+      const entry = found.get(t.toLowerCase()) || { name: t, count: 0 };
+      entry.count++;
+      found.set(t.toLowerCase(), entry);
+    }
+  return [...found.values()].sort((x, y) => y.count - x.count || x.name.localeCompare(y.name));
+}
+
 function visibleArticles() {
   const q = state.query.trim().toLowerCase();
   if (q)
     return state.articles.filter((a) =>
-      [a.title, a.site, a.excerpt, a.author, a.url].some((v) => (v || "").toLowerCase().includes(q))
+      [a.title, a.site, a.excerpt, a.author, a.url, ...(a.tags || [])].some((v) => (v || "").toLowerCase().includes(q))
     );
-  if (state.tab === "liked") return state.articles.filter((a) => a.liked);
-  if (state.tab === "archive") return state.articles.filter((a) => a.archived);
-  return state.articles.filter((a) => !a.archived);
+  const list = inTab(state.tab);
+  return state.tag ? list.filter((a) => hasTag(a, state.tag)) : list;
+}
+
+function showTag(tag) {
+  state.tag = tag;
+  state.query = "";
+  if (location.hash && location.hash !== "#/") location.hash = "#/";
+  else renderList();
+}
+
+const tagChip = (tag) =>
+  h("button", { class: "chip", type: "button", title: `Show everything tagged ${tag}`, onclick: (e) => (e.stopPropagation(), showTag(tag)) }, tag);
+
+// A small menu for choosing an article's tags: tick existing ones or type a new one.
+function tagMenu(article, anchor) {
+  const open = document.querySelector(".tag-pop");
+  closeFloaters();
+  if (open && open.dataset.id === article.id) return;
+  const pop = h("div", { class: "tag-pop", role: "dialog", "aria-label": "Tags" });
+  pop.dataset.id = article.id;
+  const setTags = (tags) => patchArticle(article, { tags }).then(draw);
+  const draw = () => {
+    const mine = article.tags || [];
+    const field = h("input", { class: "field", placeholder: mine.length ? "Add another tag" : "Add a tag, e.g. Long reads", "aria-label": "New tag", maxlength: 40, autocomplete: "off", enterkeyhint: "done" });
+    const options = allTags().map((t) => t.name);
+    for (const t of mine) if (!options.some((o) => o.toLowerCase() === t.toLowerCase())) options.push(t);
+    pop.replaceChildren(
+      h("b", null, "Tags"),
+      options.length
+        ? h(
+            "div",
+            { class: "tag-options" },
+            options.map((name) => {
+              const on = hasTag(article, name);
+              return h(
+                "button",
+                { class: "chip" + (on ? " on" : ""), type: "button", "aria-pressed": String(on), onclick: () => setTags(on ? mine.filter((t) => t.toLowerCase() !== name.toLowerCase()) : [...mine, name]) },
+                name
+              );
+            })
+          )
+        : h("span", { class: "small" }, "No tags yet. Tags work like folders: an article can have several."),
+      h(
+        "form",
+        { class: "row", onsubmit: (e) => { e.preventDefault(); const v = field.value.trim(); if (v && !hasTag(article, v)) setTags([...mine, v]); else field.value = ""; } },
+        field,
+        h("button", { class: "btn", type: "submit" }, "Add")
+      )
+    );
+    if (!pop.isConnected) placeNear(pop, anchor.getBoundingClientRect(), true);
+    if (!options.length) field.focus();
+  };
+  draw();
+  const close = (event) => {
+    if (event.type === "keydown" ? event.key !== "Escape" : pop.contains(event.target) || anchor.contains(event.target)) return;
+    pop.remove();
+    document.removeEventListener("click", close);
+    document.removeEventListener("keydown", close);
+  };
+  setTimeout(() => (document.addEventListener("click", close), document.addEventListener("keydown", close)));
 }
 
 async function patchArticle(article, patch, undoLabel) {
@@ -266,12 +346,14 @@ function itemRow(a) {
       "div",
       { class: "item-text" },
       h("a", { class: "item-main", href: `#/read/${a.id}` }, h("h2", null, a.title || a.url), a.excerpt ? h("p", { class: "excerpt" }, a.excerpt) : null),
+      a.tags?.length ? h("div", { class: "chips" }, a.tags.map(tagChip)) : null,
     h(
       "div",
       { class: "item-foot" },
       h("span", { class: "meta" }, h("span", { class: "site" }, a.site || ""), meta ? " · " + meta : ""),
       a.highlights ? h("span", { class: "hl-count", title: `${a.highlights} highlight${a.highlights === 1 ? "" : "s"}` }, String(a.highlights)) : null,
       reading ? h("span", { class: "progress", title: `${Math.round(a.progress * 100)}% read` }, h("i", { style: `width:${a.progress * 100}%` })) : null,
+      iconBtn("tag", "Tags", (e) => tagMenu(a, e.currentTarget), { on: a.tags?.length > 0 }),
       iconBtn("heart", a.liked ? "Unlike" : "Like", () => patchArticle(a, { liked: !a.liked }), { on: a.liked, filled: a.liked }),
       a.archived
         ? iconBtn("inbox", "Move back to unread", () => patchArticle(a, { archived: false }, "Moved to unread"))
@@ -304,6 +386,21 @@ function renderList() {
     ? h("form", { class: "add-row", onsubmit: (e) => (e.preventDefault(), saveUrl(urlInput.value, addBtn)) }, urlInput, addBtn)
     : null;
 
+  // Tags act as folders within the current list. Hidden until a tag exists.
+  const tabTags = allTags(inTab(state.tab));
+  if (state.tag && !tabTags.some((t) => t.name.toLowerCase() === state.tag.toLowerCase())) tabTags.unshift({ name: state.tag, count: 0 });
+  const tagBar = tabTags.length && !state.query
+    ? h(
+        "div",
+        { class: "tag-bar", role: "group", "aria-label": "Filter by tag" },
+        h("button", { class: "chip" + (state.tag ? "" : " on"), type: "button", "aria-pressed": String(!state.tag), onclick: () => showTag("") }, "All"),
+        tabTags.map((t) => {
+          const on = state.tag.toLowerCase() === t.name.toLowerCase();
+          return h("button", { class: "chip" + (on ? " on" : ""), type: "button", "aria-pressed": String(on), onclick: () => showTag(on ? "" : t.name) }, t.name, h("span", { class: "count" }, String(t.count)));
+        })
+      )
+    : null;
+
   const search = h("input", { class: "field", type: "search", placeholder: "Search", "aria-label": "Search saved articles", value: state.query });
   const listEl = h("ul", { class: "list" });
   const fill = () => {
@@ -311,6 +408,8 @@ function renderList() {
     if (items.length) return listEl.replaceChildren(...items.map(itemRow));
     const blank = state.query
       ? ["Nothing matches", "Try a different word, or part of the site name."]
+      : state.tag
+      ? [`Nothing tagged ${state.tag} here`, "Try another list, or clear the tag."]
       : state.tab === "liked"
       ? ["No likes yet", "Tap the heart on anything you want to keep handy."]
       : state.tab === "archive"
@@ -321,6 +420,7 @@ function renderList() {
   search.addEventListener("input", () => {
     state.query = search.value;
     for (const t of app.querySelectorAll(".tab")) t.setAttribute("aria-selected", "false");
+    tagBar?.remove();
     if (!state.query) return renderList();
     fill();
   });
@@ -343,6 +443,7 @@ function renderList() {
       { class: "wrap" },
       addRow,
       h("div", { class: "tools", role: "tablist" }, tab("unread", "Unread"), tab("liked", "Liked"), tab("archive", "Archive"), h("div", { class: "search" }, icon("search"), search)),
+      tagBar,
       listEl
     )
   );
@@ -476,6 +577,7 @@ function syncSuffix(sync) {
 function closeFloaters() {
   document.querySelector(".hl-btn")?.remove();
   document.querySelector(".hl-pop")?.remove();
+  document.querySelector(".tag-pop")?.remove();
 }
 
 function placeNear(el, rect, below) {
@@ -584,6 +686,48 @@ document.addEventListener("click", (event) => {
   if (!event.target.closest?.(".hl-pop")) document.querySelector(".hl-pop")?.remove();
 });
 
+// Plain text from the model: a short paragraph or two, then "- " bullets.
+function summaryBody(text) {
+  const out = [];
+  let list = null;
+  for (const raw of text.split(/\n+/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    const bullet = line.match(/^[-*•]\s+(.*)/);
+    if (bullet) (list ||= out[out.push(h("ul")) - 1]).append(h("li", null, bullet[1]));
+    else (list = null), out.push(h("p", null, line));
+  }
+  return out;
+}
+
+function summaryBox(id, article) {
+  if (!article.content || (!article.summary && !article.canSummarize)) return null;
+  const box = h("section", { class: "summary", "aria-label": "Summary" });
+  const show = (text) =>
+    box.replaceChildren(h("div", { class: "summary-head" }, icon("spark"), h("b", null, "Summary"), h("span", { class: "small" }, "by AI, may miss nuance")), ...summaryBody(text));
+  if (article.summary) {
+    show(article.summary);
+    return box;
+  }
+  const button = h("button", { class: "btn quiet", type: "button" }, icon("spark"), "Summarize");
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    button.lastChild.textContent = "Summarizing…";
+    try {
+      const { summary } = await api(`/articles/${id}/summary`, { method: "POST" });
+      article.summary = summary;
+      show(summary);
+    } catch (err) {
+      toast(err.message);
+      button.disabled = false;
+      button.lastChild.textContent = "Summarize";
+    }
+  });
+  box.classList.add("summary-ask");
+  box.append(button);
+  return box;
+}
+
 async function renderReader(id) {
   state.listScroll = window.scrollY;
   const known = state.articles.find((a) => a.id === id);
@@ -612,13 +756,18 @@ async function renderReader(id) {
   if (known) Object.assign(known, { ...article, content: undefined, highlights: reader.highlights.length });
   document.title = article.title || "Later";
 
+  const tagLine = h("div", { class: "chips reader-tags" });
   const draw = () => {
     const typeBtn = iconBtn("type", "Text settings", () => typeMenu(barWrap));
     typeBtn.setAttribute("data-type-btn", "");
+    const tags = meta.tags || [];
+    tagLine.replaceChildren(...tags.map(tagChip));
+    tagLine.hidden = !tags.length;
     barWrap.replaceChildren(
       h("a", { class: "icon-btn", href: "#/", "aria-label": "Back to list", title: "Back" }, icon("back")),
       h("span", { class: "spacer" }),
       typeBtn,
+      iconBtn("tag", "Tags", (e) => tagMenu(meta, e.currentTarget), { on: tags.length > 0 }),
       iconBtn("heart", meta.liked ? "Unlike" : "Like", () => patchArticle(meta, { liked: !meta.liked }), { on: meta.liked, filled: meta.liked }),
       meta.archived
         ? iconBtn("inbox", "Move back to unread", () => patchArticle(meta, { archived: false }, "Moved to unread"))
@@ -652,8 +801,10 @@ async function renderReader(id) {
       "header",
       null,
       h("h1", null, article.title || article.url),
-      h("div", { class: "byline" }, byline.map((part, i) => h("span", null, i ? "· " : "", part)))
+      h("div", { class: "byline" }, byline.map((part, i) => h("span", null, i ? "· " : "", part))),
+      tagLine
     ),
+    summaryBox(id, article),
     article.content
       ? h("div", { class: "prose", html: article.content })
       : h(
@@ -848,6 +999,60 @@ async function renderSettings(params) {
   };
   api("/mail").then(drawMail).catch(() => {});
 
+  // Rename or remove a tag across the whole library.
+  const tagsPanel = h("section", { class: "panel" });
+  const drawTags = () => {
+    const tags = allTags();
+    const change = async (from, to) => {
+      try {
+        await api("/tags/rename", { method: "POST", body: { from, to } });
+        await loadArticles();
+        if (state.tag.toLowerCase() === from.toLowerCase()) state.tag = to;
+        drawTags();
+        toast(to ? `Renamed to ${to}` : `Removed ${from}`);
+      } catch (err) {
+        toast(err.message);
+      }
+    };
+    tagsPanel.replaceChildren(
+      h("h2", null, "Tags"),
+      h("p", null, "Tags work like folders, except an article can have more than one. Add them with the tag button on any article; Instapaper folders become tags when you import."),
+      tags.length
+        ? h(
+            "ul",
+            { class: "token-list" },
+            tags.map((t) =>
+              h(
+                "li",
+                null,
+                `${t.name} · ${t.count}`,
+                h(
+                  "span",
+                  { class: "row" },
+                  h("button", { class: "link", type: "button", onclick: () => { const to = prompt(`Rename “${t.name}” to:`, t.name)?.trim(); if (to && to !== t.name) change(t.name, to); } }, "Rename"),
+                  h("button", { class: "link", type: "button", onclick: () => confirm(`Remove the tag “${t.name}” from ${t.count} article${t.count === 1 ? "" : "s"}? The articles stay.`) && change(t.name, "") }, "Remove")
+                )
+              )
+            )
+          )
+        : h("p", { class: "small" }, "No tags yet.")
+    );
+  };
+  const loadTags = state.loaded ? Promise.resolve() : loadArticles();
+  loadTags.then(drawTags, () => {});
+
+  const aiPanel = h("section", { class: "panel" });
+  api("/status")
+    .then(({ summaries }) =>
+      aiPanel.replaceChildren(
+        h("h2", null, "AI summaries"),
+        summaries
+          ? h("p", null, "On. Open any article and tap ", h("b", null, "Summarize"), " for a short overview. Each summary is made once and kept. A typical article costs two to five cents on your Anthropic account.")
+          : h("p", null, "Off. To turn it on, add an Anthropic API key to this site as the environment variable ", h("code", null, "ANTHROPIC_API_KEY"), " (Netlify: Project configuration, Environment variables), then redeploy. A ", h("b", null, "Summarize"), " button then appears on every article.")
+      )
+    )
+    .catch(() => {});
+
   app.replaceChildren(
     h("header", { class: "bar" }, h("div", { class: "wrap" }, h("a", { class: "icon-btn", href: "#/", "aria-label": "Back to list", title: "Back" }, icon("back")), h("a", { class: "brand", href: "#/" }, "Later"))),
     h(
@@ -873,6 +1078,8 @@ async function renderSettings(params) {
         shareLog
       ),
       mailPanel,
+      tagsPanel,
+      aiPanel,
       h(
         "section",
         { class: "panel" },

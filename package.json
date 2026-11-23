@@ -12,6 +12,7 @@
     "zip": "rm -f public/later-extension.zip && cd extension && zip -qr ../public/later-extension.zip . -x '.*'"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.13.0",
     "@mozilla/readability": "^0.6.0",
     "@netlify/blobs": "^10.0.0",
     "linkedom": "^0.18.0"

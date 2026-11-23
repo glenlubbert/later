@@ -18,6 +18,8 @@ and no subscription.
 - **Chrome extension:** one click, `Option+Shift+S`, or right-click a link. It sends the page as you see it, so articles behind a login you have are captured too.
 - **iPhone and iPad:** a "Save to Later" entry in the share sheet, installed as an Apple Shortcut. No App Store, no developer account.
 - **Save by email:** forward a link or a whole newsletter to an address on your own domain (optional, needs a few DNS records).
+- **Tags:** tag articles to group them, like folders except an article can have several. Filter any list by tag; rename or remove tags in Settings. Instapaper folders become tags when you import.
+- **AI summaries (optional):** a *Summarize* button on every article gives a short overview from Claude, using your own Anthropic API key.
 - **Highlights and notes:** select text to highlight, tap a highlight to add a note. Optionally synced to a Dropbox folder as one Markdown file per article, with front matter that suits Obsidian.
 - **Import and export:** bring in an Instapaper CSV export, or any list of links; export your library as JSON.
 
@@ -71,10 +73,18 @@ Mail is received by [Forward Email](https://forwardemail.net), which is free for
 
 On Forward Email's free plan the address is publicly discoverable, so Later only saves a message when it arrives from Forward Email's servers, is from a sender you listed, and passes that sender's DMARC, SPF or DKIM check. Everything else is dropped.
 
+### AI summaries (optional)
+
+1. Create an API key at [platform.claude.com](https://platform.claude.com) (Settings, API keys).
+2. In Netlify, open the project's *Project configuration*, then *Environment variables*, and add `ANTHROPIC_API_KEY` with the key as its value. Make sure its scopes include Functions.
+3. Redeploy (Deploys, then *Trigger deploy*, or `npm run deploy`).
+
+A *Summarize* button then appears at the top of every article. A summary is made only when you tap it, then stored with the article, so you pay once per article: usually two to five cents. The article text is sent to Anthropic's API to make it; nothing is sent for articles you don't summarize.
+
 ## Good to know
 
 - **One user.** There are no accounts; one password guards one library.
-- **Where your data lives.** Articles, highlights and the password hash are stored in [Netlify Blobs](https://docs.netlify.com/build/data-and-storage/netlify-blobs/) inside your own Netlify project. Nothing is sent anywhere else, apart from fetching the pages you save and, if you connect it, your Dropbox.
+- **Where your data lives.** Articles, highlights and the password hash are stored in [Netlify Blobs](https://docs.netlify.com/build/data-and-storage/netlify-blobs/) inside your own Netlify project. Nothing is sent anywhere else, apart from fetching the pages you save and, if you turn them on, your Dropbox and the articles you ask to summarize.
 - **Sites that block robots.** Saves from the share sheet or the "+" button are fetched by the server, and some sites refuse that. The page is still saved as a link. The Chrome extension avoids the problem because it sends what your browser already loaded.
 - **PDFs and videos** are saved as links, without a reader view.
 - **Forgot the password?** Run `npx netlify-cli blobs:delete later auth` in the project folder. The site then asks for a new password; your articles are untouched.
@@ -88,6 +98,7 @@ On Forward Email's free plan the address is publicly discoverable, so Later only
 | Article extraction | `netlify/lib/extract.mjs` | Mozilla Readability on linkedom, then an allow-list HTML sanitizer. |
 | Storage | `netlify/lib/store.mjs` | Netlify Blobs: an index, one blob per article body, one per article's highlights. |
 | Sign-in | `netlify/lib/auth.mjs` | scrypt password hash, long-lived session cookie, revocable API tokens. |
+| AI summaries | `netlify/lib/summary.mjs` | Anthropic SDK, made on request and stored with the article. |
 | Highlights and Dropbox | `netlify/lib/highlights.mjs`, `netlify/lib/dropbox.mjs` | OAuth with PKCE, so no Dropbox secret is stored. |
 | Chrome extension | `extension/` | Manifest V3. Asks only for access to the one site you name. |
 | iOS Shortcut | `scripts/make_shortcut.py` | Builds and signs `public/later.shortcut` (needs macOS). |
