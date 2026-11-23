@@ -608,6 +608,7 @@ async function renderReader(id) {
   reader.article = article;
   reader.highlights = article.highlights || [];
   const meta = known || article;
+  const isMail = article.kind === "email";
   if (known) Object.assign(known, { ...article, content: undefined, highlights: reader.highlights.length });
   document.title = article.title || "Later";
 
@@ -623,7 +624,7 @@ async function renderReader(id) {
         ? iconBtn("inbox", "Move back to unread", () => patchArticle(meta, { archived: false }, "Moved to unread"))
         : iconBtn("archive", "Archive", archiveAndLeave),
       iconBtn("trash", "Delete", () => removeArticle(meta, () => (location.hash = "#/"))),
-      h("a", { class: "icon-btn", href: article.url, target: "_blank", rel: "noopener noreferrer", "aria-label": "Open original", title: "Open original" }, icon("out"))
+      ...(isMail ? [] : [h("a", { class: "icon-btn", href: article.url, target: "_blank", rel: "noopener noreferrer", "aria-label": "Open original", title: "Open original" }, icon("out"))])
     );
   };
   const archiveAndLeave = async () => {
@@ -634,6 +635,7 @@ async function renderReader(id) {
   draw();
 
   const byline = [article.author, article.site, readTime(article.words)].filter(Boolean);
+  if (!isMail) byline.push(h("a", { href: article.url, target: "_blank", rel: "noopener noreferrer" }, "Original"));
   const refetch = async (button) => {
     button.disabled = true;
     try {
@@ -650,7 +652,7 @@ async function renderReader(id) {
       "header",
       null,
       h("h1", null, article.title || article.url),
-      h("div", { class: "byline" }, byline.map((part, i) => h("span", null, (i ? "· " : "") + part)), h("span", null, byline.length ? "· " : "", h("a", { href: article.url, target: "_blank", rel: "noopener noreferrer" }, "Original")))
+      h("div", { class: "byline" }, byline.map((part, i) => h("span", null, i ? "· " : "", part)))
     ),
     article.content
       ? h("div", { class: "prose", html: article.content })
@@ -658,7 +660,7 @@ async function renderReader(id) {
           "div",
           { class: "note" },
           article.note || "There's no reader view for this page.",
-          h("div", { class: "row" }, h("a", { class: "btn", href: article.url, target: "_blank", rel: "noopener noreferrer" }, "Open the original"), h("button", { class: "btn quiet", type: "button", onclick: (e) => refetch(e.currentTarget) }, "Try again"))
+          isMail ? null : h("div", { class: "row" }, h("a", { class: "btn", href: article.url, target: "_blank", rel: "noopener noreferrer" }, "Open the original"), h("button", { class: "btn quiet", type: "button", onclick: (e) => refetch(e.currentTarget) }, "Try again"))
         ),
     article.content
       ? h(
@@ -797,6 +799,55 @@ async function renderSettings(params) {
 
   const marklet = h("a", { class: "btn quiet bookmarklet", href: bookmarklet, onclick: (e) => (e.preventDefault(), toast("Drag this button onto your bookmarks bar")) }, "Save to Later");
 
+  const shareLog = h("p", { class: "small" });
+  api("/sharelog")
+    .then(({ attempts }) => {
+      const last = attempts && attempts[0];
+      if (!last) return;
+      const when = new Date(last.at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+      shareLog.textContent = `Last save from the shortcut: ${when}. ${last.status === 200 ? last.message : "Failed: " + last.message}.`;
+    })
+    .catch(() => {});
+
+  // Saving by email: the forwarding address, who may use it, and what happened last.
+  const mailPanel = h("section", { class: "panel" }, h("h2", null, "Email"));
+  const drawMail = (info) => {
+    const save = async (next) => {
+      try {
+        drawMail(await api("/mail", { method: "PUT", body: { address: info.address, senders: info.senders, ...next } }));
+      } catch (err) {
+        toast(err.message);
+      }
+    };
+    const addressField = h("input", { class: "field", type: "email", placeholder: "save@in.example.com", "aria-label": "Forwarding address", value: info.address, autocomplete: "off", spellcheck: "false" });
+    const senderField = h("input", { class: "field", type: "email", placeholder: "you@example.com", "aria-label": "Your email address", autocomplete: "email", spellcheck: "false" });
+    const last = info.log && info.log[0];
+    const when = last ? new Date(last.at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "";
+    const canAllow = last && last.reason === "sender" && last.sender && !info.senders.includes(last.sender);
+    const parts = [
+      h("h2", null, "Email"),
+      info.address
+        ? h("p", null, "Forward any email to ", h("code", null, info.address), ". A message that is mostly a link saves that page; a newsletter or long email is saved as an article itself.")
+        : h("p", null, "Forward emails to an address on your own domain to save them. This needs a one-time mail setup, described in the README under “Save by email”. Once it's done, enter the address here."),
+      info.address
+        ? h("div", { class: "row" }, h("button", { class: "btn", type: "button", onclick: () => navigator.clipboard.writeText(info.address).then(() => toast("Address copied"), () => toast("Couldn't copy")) }, "Copy address"), h("button", { class: "btn quiet", type: "button", onclick: () => save({ address: "" }) }, "Change address"))
+        : h("form", { class: "stack", onsubmit: (e) => (e.preventDefault(), save({ address: addressField.value })) }, addressField, h("div", { class: "row" }, h("button", { class: "btn", type: "submit" }, "Save address"))),
+      h("p", { style: "margin-top:22px" }, h("b", null, "Who can save by email")),
+      info.senders.length
+        ? h("p", { class: "small" }, "Only mail sent from these addresses is saved. Everything else is ignored.")
+        : h("p", { class: "note" }, h("b", null, "Add the address you forward from."), " Nothing is saved until you do, so strangers can't fill your list."),
+      info.senders.length
+        ? h("ul", { class: "token-list" }, info.senders.map((s) => h("li", null, s, h("button", { class: "link", type: "button", onclick: () => save({ senders: info.senders.filter((x) => x !== s) }) }, "Remove"))))
+        : null,
+      h("form", { class: "row", onsubmit: (e) => (e.preventDefault(), senderField.value.trim() && save({ senders: [...info.senders, senderField.value] })) }, senderField, h("button", { class: "btn", type: "submit" }, "Add")),
+      last
+        ? h("p", { class: "small" }, `Last email: ${when}. ${last.status === "saved" ? last.message : "Not saved: " + last.message}.`, canAllow ? " " : null, canAllow ? h("button", { class: "btn quiet", type: "button", onclick: () => save({ senders: [...info.senders, last.sender] }) }, "Allow this sender") : null)
+        : null
+    ];
+    mailPanel.replaceChildren(...parts.filter(Boolean));
+  };
+  api("/mail").then(drawMail).catch(() => {});
+
   app.replaceChildren(
     h("header", { class: "bar" }, h("div", { class: "wrap" }, h("a", { class: "icon-btn", href: "#/", "aria-label": "Back to list", title: "Back" }, icon("back")), h("a", { class: "brand", href: "#/" }, "Later"))),
     h(
@@ -818,8 +869,10 @@ async function renderSettings(params) {
         ),
         h("div", { class: "row" }, h("button", { class: "btn", type: "button", onclick: (e) => makeToken(e.currentTarget) }, "Create token"), h("a", { class: "btn quiet", href: "/later.shortcut" }, "Get the shortcut")),
         tokenArea,
-        tokenList
+        tokenList,
+        shareLog
       ),
+      mailPanel,
       h(
         "section",
         { class: "panel" },

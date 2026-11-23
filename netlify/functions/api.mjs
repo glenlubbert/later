@@ -1,9 +1,10 @@
 import { randomBytes } from "node:crypto";
 import * as auth from "../lib/auth.mjs";
-import { extract, normalizeUrl, hostOf } from "../lib/extract.mjs";
-import { readIndex, updateIndex, readBody, writeBody, deleteBody } from "../lib/store.mjs";
+import { extract, normalizeUrl, hostOf, readEmail, htmlToText } from "../lib/extract.mjs";
+import { store, readIndex, updateIndex, readBody, writeBody, deleteBody } from "../lib/store.mjs";
 import * as dropbox from "../lib/dropbox.mjs";
 import * as marks from "../lib/highlights.mjs";
+import * as mail from "../lib/mail.mjs";
 
 const json = (data, status = 200, headers = {}) =>
   new Response(JSON.stringify(data), {
@@ -80,13 +81,87 @@ async function saveArticle({ url, title, html }) {
   return { article: saved.meta, duplicate: !saved.wasNew };
 }
 
+// A forwarded email kept as an article. It has no web address, so its key
+// is "email:<hash of the message id>", which also makes redeliveries harmless.
+async function saveEmail({ key, title, author, html, text }) {
+  const data = readEmail(html, text);
+  if (!data.content) throw new Error("The email had no readable text");
+  const url = `email:${key}`;
+  let saved;
+  await updateIndex((list) => {
+    const existing = list.find((a) => a.url === url);
+    const meta = existing ?? { id: newId(), url, kind: "email", liked: false, progress: 0 };
+    Object.assign(meta, {
+      title: String(title).slice(0, 300),
+      site: "Email",
+      author: author || "",
+      excerpt: data.excerpt,
+      image: "",
+      words: data.words,
+      hasContent: true,
+      fetched: true,
+      note: "",
+      archived: false,
+      savedAt: Date.now(),
+    });
+    saved = { ...meta };
+    return { list: [meta, ...list.filter((a) => a.id !== meta.id)] };
+  });
+  await writeBody(saved.id, { content: data.content });
+  return saved;
+}
+
+// Handles one message delivered by the mail relay. Always answers 200 once
+// the caller is known to be the relay: any other status makes the sending
+// mail server retry for days.
+async function receiveMail(req, ip) {
+  const local = process.env.NETLIFY_DEV === "true";
+  // Not logged: the address is public, so strangers knocking here is routine.
+  if (!local && !(await mail.fromRelay(ip))) {
+    console.warn("inbound mail refused: caller is not the mail relay", ip);
+    return fail("Forbidden", 403);
+  }
+  const payload = await body(req);
+  const msg = mail.parse(payload);
+  const { senders } = await mail.readConfig();
+  if (!msg.sender) {
+    await mail.log({ status: "blocked", message: `Unreadable message (fields: ${Object.keys(payload).slice(0, 12).join(", ") || "none"})` });
+    return json({ ok: false });
+  }
+  if (!senders.includes(msg.sender)) {
+    await mail.log({ status: "blocked", sender: msg.sender, reason: "sender", message: `${msg.sender} isn't on your list of senders` });
+    return json({ ok: false });
+  }
+  if (!local && !mail.authentic(payload, msg.sender)) {
+    await mail.log({ status: "blocked", sender: msg.sender, message: `Couldn't confirm the message really came from ${msg.sender}` });
+    return json({ ok: false });
+  }
+  const text = msg.text || htmlToText(msg.html);
+  const title = mail.cleanSubject(msg.subject);
+  try {
+    const link = mail.pickLink(msg.subject, text);
+    if (link) {
+      const { article } = await saveArticle({ url: link, title });
+      await mail.log({ status: "saved", sender: msg.sender, message: `Saved the link: ${article.title || hostOf(article.url)}` });
+    } else {
+      const article = await saveEmail({ key: msg.key, title, author: mail.originalSender(text) || msg.senderName, html: msg.html, text: msg.text });
+      await mail.log({ status: "saved", sender: msg.sender, message: `Saved the email: ${article.title}` });
+    }
+    return json({ ok: true });
+  } catch (err) {
+    await mail.log({ status: "error", sender: msg.sender, message: `${err.message || "Could not save"} (${title.slice(0, 60)})` });
+    return json({ ok: false });
+  }
+}
+
 async function loadArticle(id, { refresh = false } = {}) {
   const list = await readIndex();
   const meta = list.find((a) => a.id === id);
   if (!meta) return null;
-  let stored = refresh ? null : await readBody(id);
+  const isMail = meta.kind === "email";
+  let stored = refresh && !isMail ? null : await readBody(id);
   // Imported links are fetched the first time they are opened.
-  if (!stored || (!meta.fetched && !stored.content)) {
+  if (!isMail && (!stored || (!meta.fetched && !stored.content))) {
     const data = await extract(meta.url);
     if (data.content || !stored?.content) {
       stored = { content: data.content };
@@ -189,7 +264,23 @@ async function importList(text) {
   return { added, skipped };
 }
 
-export default async (req) => {
+// Remembers the last few saves from the iPhone shortcut, so a failing
+// shortcut can be diagnosed from Settings. Never stores the token itself.
+async function logShare(req, status, message) {
+  try {
+    const list = (await store().get("sharelog", { type: "json" })) || [];
+    list.unshift({
+      at: Date.now(),
+      status,
+      message: String(message).slice(0, 200),
+      sentToken: /^Bearer\s+\S/.test(req.headers.get("authorization") || ""),
+      agent: (req.headers.get("user-agent") || "").slice(0, 80),
+    });
+    await store().setJSON("sharelog", list.slice(0, 10));
+  } catch {}
+}
+
+export default async (req, context) => {
   const url = new URL(req.url);
   const path = url.pathname.replace(/^\/api/, "").replace(/\/+$/, "") || "/";
   const method = req.method;
@@ -199,6 +290,8 @@ export default async (req) => {
 
     if (path === "/status" && method === "GET")
       return json({ configured: who.configured, authed: who.authed });
+
+    if (path === "/inbound" && method === "POST") return await receiveMail(req, context?.ip);
 
     if (method !== "GET" && !originAllowed(req)) return fail("Cross-site request blocked", 403);
 
@@ -222,7 +315,10 @@ export default async (req) => {
       new Response(message, { status, headers: { "content-type": "text/plain; charset=utf-8" } });
 
     if (!who.authed) {
-      if (plain) return say("Not signed in. Make a new token in Later settings and re-add the shortcut.", 401);
+      if (plain) {
+        await logShare(req, 401, "Token missing or not recognised");
+        return say("Not signed in. Make a new token in Later settings and re-add the shortcut.", 401);
+      }
       return fail(who.configured ? "Sign in required" : "Not set up yet", 401);
     }
 
@@ -231,16 +327,40 @@ export default async (req) => {
       return json({ ok: true }, 200, { "set-cookie": auth.clearCookie() });
     }
 
+    if (path === "/sharelog" && method === "GET")
+      return json({ attempts: (await store().get("sharelog", { type: "json" })) || [] });
+
+    if (path === "/mail" && method === "GET") return json({ ...(await mail.readConfig()), log: await mail.readLog() });
+    if (path === "/mail" && method === "PUT") {
+      try {
+        return json({ ...(await mail.writeConfig(await body(req))), log: await mail.readLog() });
+      } catch (err) {
+        return fail(err.message);
+      }
+    }
+
     if (path === "/articles" && method === "GET") return json({ articles: await readIndex() });
 
     if (path === "/save" && method === "POST") {
       const input = await body(req);
-      if (!input.url) return plain ? say("Nothing to save: no link was shared.", 400) : fail("No URL given");
+      if (plain) {
+        // The shortcut sends the link it found plus the raw shared item; use the first real link in either.
+        const link = [input.url, input.text]
+          .map((v) => String(v || "").match(/https?:\/\/[^\s"'<>]+/i)?.[0])
+          .find(Boolean);
+        input.url = link || "";
+      }
+      if (!input.url) {
+        if (plain) await logShare(req, 400, `No link in request (got: ${Object.keys(input).join(", ") || "nothing"})`);
+        return plain ? say("Nothing to save: no link was shared.", 400) : fail("No URL given");
+      }
       try {
         const result = await saveArticle(input);
+        if (plain) await logShare(req, 200, `Saved ${hostOf(result.article.url)}`);
         return plain ? say(`Saved: ${result.article.title}`) : json(result);
       } catch (err) {
         const message = err.message || "Could not save that link";
+        if (plain) await logShare(req, 400, `${message} (link: ${String(input.url).slice(0, 80)})`);
         return plain ? say(`Couldn't save: ${message}`, 400) : fail(message);
       }
     }

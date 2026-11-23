@@ -17,6 +17,7 @@ and no subscription.
 - **Offline:** add it to your home screen and articles you've loaded stay readable without a connection.
 - **Chrome extension:** one click, `Option+Shift+S`, or right-click a link. It sends the page as you see it, so articles behind a login you have are captured too.
 - **iPhone and iPad:** a "Save to Later" entry in the share sheet, installed as an Apple Shortcut. No App Store, no developer account.
+- **Save by email:** forward a link or a whole newsletter to an address on your own domain (optional, needs a few DNS records).
 - **Highlights and notes:** select text to highlight, tap a highlight to add a note. Optionally synced to a Dropbox folder as one Markdown file per article, with front matter that suits Obsidian.
 - **Import and export:** bring in an Instapaper CSV export, or any list of links; export your library as JSON.
 
@@ -55,6 +56,20 @@ Later writes to Dropbox through an app that you create in your own Dropbox accou
 4. On your Later site, under the gear icon, paste the **App key** (never the secret), choose a folder, and click *Connect Dropbox*.
 
 Each highlighted article becomes `<folder>/<Article title>.md`. The file is rewritten whenever its highlights change and removed when the last highlight is.
+
+### Save by email (optional)
+
+Forward an email to your own address and it lands in your list: a message that is mostly a link saves that page, anything longer (a newsletter, say) is saved as an article itself.
+
+Mail is received by [Forward Email](https://forwardemail.net), which is free for this and needs no account. It hands each message to your site.
+
+1. Pick a subdomain that is used for nothing else, for example `in.example.com`, and add three DNS records for it (name `in`):
+   - `MX`, priority 0, `mx1.forwardemail.net`
+   - `MX`, priority 0, `mx2.forwardemail.net`
+   - `TXT`, `forward-email=save:https://YOUR-SITE/api/inbound?attachments=false&raw=false`
+2. In your site's settings, under **Email**, enter the address (`save@in.example.com`) and add the address you will forward from.
+
+On Forward Email's free plan the address is publicly discoverable, so Later only saves a message when it arrives from Forward Email's servers, is from a sender you listed, and passes that sender's DMARC, SPF or DKIM check. Everything else is dropped.
 
 ## Good to know
 

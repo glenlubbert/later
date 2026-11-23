@@ -260,3 +260,63 @@ export async function extract(url, suppliedHtml) {
   }
   return out;
 }
+
+const escapeHtml = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+// The text of an HTML email, with link targets kept, for emails that have no plain-text part.
+export function htmlToText(html) {
+  try {
+    const { document } = parseHTML(`<!doctype html><html><body>${html}</body></html>`);
+    for (const el of document.querySelectorAll("style, script, head, title")) el.remove();
+    for (const a of document.querySelectorAll("a[href]")) a.append(` ${a.getAttribute("href")} `);
+    for (const el of document.querySelectorAll("br, p, div, tr, li, h1, h2, h3")) el.append("\n");
+    return document.body.textContent || "";
+  } catch {
+    return "";
+  }
+}
+
+// Turns an email body into reader content. Newsletters are tables all the
+// way down, so Readability's pick is only used when it kept most of the text.
+export function readEmail(html, text) {
+  const out = { content: "", words: 0, excerpt: "", image: "" };
+  if (html && html.trim()) {
+    try {
+      const { document } = parseHTML(/<html[\s>]/i.test(html) ? html : `<!doctype html><html><body>${html}</body></html>`);
+      for (const el of document.querySelectorAll("style, script, title")) el.remove();
+      // Tracking pixels and spacer images.
+      for (const img of document.querySelectorAll("img")) {
+        const w = parseInt(img.getAttribute("width") || "", 10);
+        const hgt = parseInt(img.getAttribute("height") || "", 10);
+        if (w <= 3 || hgt <= 3) img.remove();
+      }
+      const whole = sanitize(document.body?.innerHTML || "", "about:blank");
+      const total = squash(document.body?.textContent).length;
+      let picked = null;
+      try {
+        picked = new Readability(document, { charThreshold: 200 }).parse();
+      } catch {
+        picked = null;
+      }
+      const pickedText = squash(picked?.textContent);
+      out.content = picked?.content && pickedText.length >= total * 0.7 ? sanitize(picked.content, "about:blank") : whole;
+    } catch {
+      out.content = "";
+    }
+  }
+  if (!squash(out.content.replace(/<[^>]+>/g, " ")) && text && text.trim()) {
+    out.content = text
+      .trim()
+      .split(/\n\s*\n/)
+      .map((para) => {
+        const safe = escapeHtml(para.trim()).replace(/\n/g, "<br>");
+        return `<p>${safe.replace(/https?:\/\/[^\s<]+/g, (u) => `<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`)}</p>`;
+      })
+      .join("\n");
+  }
+  const plain = squash(out.content.replace(/<[^>]+>/g, " ").replace(/&[a-z#0-9]+;/gi, " "));
+  out.words = plain ? plain.split(" ").length : 0;
+  out.excerpt = plain.slice(0, 240);
+  if (!plain) out.content = "";
+  return out;
+}

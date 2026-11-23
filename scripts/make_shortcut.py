@@ -30,6 +30,13 @@ def dictionary(key, value):
         "WFSerializationType": "WFDictionaryFieldValue",
     }
 
+# The shared item itself, as text. Sent alongside the detected link so the
+# server can still find the address when "Get URLs" comes back empty.
+INPUT_TEXT = {
+    "Value": {"string": "\ufffc", "attachmentsByRange": {"{0, 1}": {"Type": "ExtensionInput"}}},
+    "WFSerializationType": "WFTextTokenString",
+}
+
 actions = [
     {"WFWorkflowActionIdentifier": "is.workflow.actions.gettext",
      "WFWorkflowActionParameters": {"UUID": U_BASE, "WFTextActionText": ""}},
@@ -53,7 +60,11 @@ actions = [
          "ShowHeaders": True,
          "WFHTTPHeaders": dictionary("Authorization", text_with("Bearer ", U_TOKEN, "Text")),
          "WFHTTPBodyType": "JSON",
-         "WFJSONValues": dictionary("url", text_with("", U_URL, "URLs"))}},
+         "WFJSONValues": {
+             "Value": {"WFDictionaryFieldValueItems": [
+                 {"WFItemType": 0, "WFKey": text("url"), "WFValue": text_with("", U_URL, "URLs")},
+                 {"WFItemType": 0, "WFKey": text("text"), "WFValue": INPUT_TEXT}]},
+             "WFSerializationType": "WFDictionaryFieldValue"}}},
     {"WFWorkflowActionIdentifier": "is.workflow.actions.notification",
      "WFWorkflowActionParameters": {
          "WFNotificationActionTitle": "Later",
@@ -68,12 +79,12 @@ shortcut = {
     "WFWorkflowIcon": {"WFWorkflowIconStartColor": 4251333119, "WFWorkflowIconGlyphNumber": 59493},
     "WFWorkflowTypes": ["ActionExtension"],
     "WFWorkflowInputContentItemClasses": [
-        "WFURLContentItem", "WFSafariWebPageContentItem", "WFArticleContentItem", "WFStringContentItem"],
+        "WFURLContentItem", "WFStringContentItem"],
     "WFWorkflowOutputContentItemClasses": [],
     "WFWorkflowHasShortcutInputVariables": True,
     "WFWorkflowHasOutputFallback": False,
     "WFWorkflowImportQuestions": [
-        {"ActionIndex": 0, "Category": "Parameter", "DefaultValue": "https://",
+        {"ActionIndex": 0, "Category": "Parameter", "DefaultValue": "",
          "ParameterKey": "WFTextActionText",
          "Text": "Your Later address, e.g. https://read.example.com (no slash at the end)"},
         {"ActionIndex": 1, "Category": "Parameter", "DefaultValue": "",

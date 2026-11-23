@@ -26,13 +26,14 @@ const yaml = (s) => JSON.stringify(String(s ?? ""));
 // Same front-matter shape as the Obsidian clippings already in the vault.
 export function toMarkdown(meta, highlights, origin) {
   const sorted = [...highlights].sort((a, b) => a.start - b.start);
-  const lines = ["---", `title: ${yaml(meta.title || meta.url)}`, `source: ${yaml(meta.url)}`];
+  const isMail = meta.kind === "email";
+  const lines = ["---", `title: ${yaml(meta.title || meta.url)}`, `source: ${yaml(isMail ? "email" : meta.url)}`];
   if (meta.author) lines.push("author:", `  - ${yaml(`[[${meta.author}]]`)}`);
   if (meta.site) lines.push(`site: ${yaml(meta.site)}`);
   lines.push(`created: ${day(meta.savedAt || Date.now())}`, `updated: ${day(Date.now())}`);
   if (meta.excerpt) lines.push(`description: ${yaml(meta.excerpt)}`);
   lines.push("tags:", '  - "highlights"', "---");
-  lines.push(`[Original](${meta.url}) · [Open in Later](${origin}/#/read/${meta.id})`, "");
+  lines.push(`${isMail ? "" : `[Original](${meta.url}) · `}[Open in Later](${origin}/#/read/${meta.id})`, "");
   lines.push(`## Highlights`, "");
   for (const h of sorted) {
     const quote = String(h.quote || h.text)
